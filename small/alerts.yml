@@ -1,0 +1,11 @@
+groups:
+  - name: observability-lab
+    rules:
+      - alert: NodeExporterDown
+        expr: up{job="node-exporter"} == 0
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Node exporter cannot be scraped"
+          description: "Scrapes of {{ $labels.instance }} have failed for at least 30 seconds."
