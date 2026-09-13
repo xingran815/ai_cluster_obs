@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import math
 import os
 import random
@@ -61,14 +62,34 @@ class TrainingConfig:
     seed: int
 
 
-class JsonLogger:
-    def emit(self, event: str, **fields: Any) -> None:
-        record = {
-            "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
-            "event": event,
-            **fields,
+class JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            **getattr(record, "fields", {}),
+            "timestamp": datetime.fromtimestamp(record.created, timezone.utc).isoformat(
+                timespec="milliseconds"
+            ),
+            "level": record.levelname,
+            "event": record.getMessage(),
         }
-        print(json.dumps(record, separators=(",", ":")), flush=True)
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return json.dumps(payload, separators=(",", ":"))
+
+
+class JsonLogger:
+    def __init__(self, level: str = "INFO") -> None:
+        self.logger = logging.Logger("training_mock", level=level.upper())
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(JsonFormatter())
+        self.logger.addHandler(handler)
+        self.logger.propagate = False
+
+    def emit(
+        self, event: str, *, level: int = logging.INFO,
+        exc_info: bool = False, **fields: Any
+    ) -> None:
+        self.logger.log(level, event, extra={"fields": fields}, exc_info=exc_info)
 
 
 class TrainingSimulator:
@@ -133,6 +154,15 @@ class TrainingSimulator:
             step_started = time.monotonic()
             time.sleep(config.step_duration)
             observed_duration = max(time.monotonic() - step_started, 0.000001)
+            if config.step_duration > 0 and observed_duration > 2 * config.step_duration:
+                self.logger.emit(
+                    "slow_train_step",
+                    level=logging.WARNING,
+                    run_id=config.run_id,
+                    step=step,
+                    duration_seconds=round(observed_duration, 3),
+                    expected_duration_seconds=config.step_duration,
+                )
             throughput_noise = self.random.uniform(0.94, 1.06)
             tokens_per_second = (
                 config.tokens_per_step / observed_duration * throughput_noise
@@ -146,6 +176,7 @@ class TrainingSimulator:
             epoch = round(step / config.steps_per_epoch, 4)
             self.logger.emit(
                 "train_step",
+                level=logging.DEBUG,
                 run_id=config.run_id,
                 step=step,
                 total_steps=config.total_steps,
@@ -296,12 +327,22 @@ def config_from_args(args: argparse.Namespace) -> TrainingConfig:
 
 def main() -> int:
     config = config_from_args(build_parser().parse_args())
-    simulator = TrainingSimulator(config, JsonLogger())
+    logger = JsonLogger(env_value("LOG_LEVEL", "INFO"))
+    simulator = TrainingSimulator(config, logger)
     signal.signal(signal.SIGTERM, simulator.request_stop)
     signal.signal(signal.SIGINT, simulator.request_stop)
-    return simulator.run()
+    try:
+        start_http_server(PROMETHEUS_PORT)
+        return simulator.run()
+    except Exception:
+        logger.emit(
+            "training_failed",
+            level=logging.ERROR,
+            exc_info=True,
+            run_id=config.run_id,
+        )
+        return 1
 
 
 if __name__ == "__main__":
-    start_http_server(PROMETHEUS_PORT)
     sys.exit(main())
