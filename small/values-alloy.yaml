@@ -1,0 +1,28 @@
+alloy:
+  mounts:
+    varlog: true
+  configMap:
+    content: |
+      logging {
+        level  = "debug"
+        format = "logfmt"
+      }
+
+      discovery.kubernetes "pods" {
+        role = "pod"
+        namespaces {
+          names = ["observability-lab"]
+        }
+      }
+
+      loki.source.kubernetes "pods" {
+        targets    = discovery.kubernetes.pods.targets
+        forward_to = [loki.write.endpoint.receiver]
+      }
+
+      loki.write "endpoint" {
+        endpoint {
+            url = "http://loki-gateway.loki.svc.cluster.local:80/loki/api/v1/push"
+            tenant_id = "local"
+        }
+      }
