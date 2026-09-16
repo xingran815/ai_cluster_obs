@@ -16,7 +16,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
-from prometheus_client import start_http_server
+from prometheus_client import start_http_server, push_to_gateway
 import prometheus_metrics as metrics
 
 
@@ -333,7 +333,7 @@ def main() -> int:
     signal.signal(signal.SIGINT, simulator.request_stop)
     try:
         start_http_server(PROMETHEUS_PORT)
-        return simulator.run()
+        return_code = simulator.run()
     except Exception:
         logger.emit(
             "training_failed",
@@ -341,7 +341,25 @@ def main() -> int:
             exc_info=True,
             run_id=config.run_id,
         )
-        return 1
+        metrics.TRAINING_SUCCESS.labels(
+            run_id=config.run_id,
+            reason="exception",
+        ).set(0)
+        return_code = 1
+
+    try:
+        # get PUSHGATEWAY_URL from environment variable
+        PUSHGATEWAY_URL = env_value("PUSHGATEWAY_URL",
+                                    "pushgateway.observability-lab.svc.cluster.local:9091")
+        push_to_gateway(PUSHGATEWAY_URL, job='training-mock', grouping_key={'run_id': config.run_id}, registry=metrics.registry)
+    except Exception:
+        logger.emit(
+            "prometheus_push_failed",
+            level=logging.WARNING,
+            exc_info=True,
+            run_id=config.run_id,
+        )
+    return return_code
 
 
 if __name__ == "__main__":

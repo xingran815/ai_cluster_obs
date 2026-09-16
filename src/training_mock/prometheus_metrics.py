@@ -1,5 +1,7 @@
 
-from prometheus_client import Gauge, Counter
+from prometheus_client import Gauge, Counter, CollectorRegistry
+
+registry = CollectorRegistry()
 
 TRAINING_STEPS_PLANNED = Gauge(
     name="steps_planned",
@@ -43,6 +45,7 @@ TRAINING_SUCCESS = Gauge(
     documentation="training success, 1 = sucess, 0 = failure",
     labelnames=["run_id", "reason"],
     namespace="training",
+    registry=registry
 )
 TRAINING_DURATION_TOTAL = Gauge(
     name="duration",
@@ -50,6 +53,7 @@ TRAINING_DURATION_TOTAL = Gauge(
     labelnames=["run_id"],
     namespace="training",
     unit="seconds",
+    registry=registry
 )
 TRAINING_ELAPSED_SECONDS = Gauge(
     name="elapsed",
